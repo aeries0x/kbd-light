@@ -8,7 +8,8 @@
  * slider, idle dimming) is respected: setting it to zero keeps it off until it
  * is turned on again, and any other level holds until the room's light
  * changes a lot. With the lid closed or the displays asleep the backlight
- * is off.
+ * is off. Optionally, it dims after a time without a key press and comes
+ * back at the next one.
  *
  * Only sysfs and evdev are used, so this needs nothing beyond libc.
  */
@@ -18,6 +19,7 @@
 #include <glob.h>
 #include <linux/input.h>
 #include <math.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -34,6 +36,9 @@
 #define DEADBAND 3		/* ignore smaller level changes */
 #define HOLD_RATIO 4.0		/* light change that ends a manual hold */
 #define DISPLAYS_OFF_S 1.0	/* displays dark this long: backlight off */
+#define RESCAN_S 30		/* look for new keyboards this often */
+#define MAX_KEYBOARDS 16
+#define LONG_BITS (8 * sizeof(long))
 
 struct config {
 	double full_lux;	/* at or below: the brightest automatic level */
@@ -41,10 +46,16 @@ struct config {
 	double off_lux;		/* above: it goes off again */
 	int min_pct;		/* level just after it comes on */
 	int max_pct;		/* level in the dark */
+	double idle_s;		/* no key press this long: dim (0: never) */
+	int idle_pct;		/* level while dimmed */
 	bool verbose;
 };
 
 static volatile sig_atomic_t stop;
+
+/* Event devices with letter keys: the built-in keyboard and external ones. */
+static int kbd_fd[MAX_KEYBOARDS];
+static int kbd_count;
 
 static void on_signal(int sig)
 {
@@ -181,6 +192,49 @@ static bool lid_closed(int fd)
 	return (bits[SW_LID / (8 * sizeof(long))] >> (SW_LID % (8 * sizeof(long)))) & 1;
 }
 
+static bool test_bit(const unsigned long *bits, int bit)
+{
+	return (bits[bit / LONG_BITS] >> (bit % LONG_BITS)) & 1;
+}
+
+static void close_keyboards(void)
+{
+	for (int i = 0; i < kbd_count; i++)
+		if (kbd_fd[i] >= 0)
+			close(kbd_fd[i]);
+	kbd_count = 0;
+}
+
+/* Open every event device that has the A key. */
+static void open_keyboards(void)
+{
+	unsigned long bits[(KEY_MAX + LONG_BITS) / LONG_BITS];
+	struct dirent *de;
+	DIR *dir;
+
+	close_keyboards();
+	dir = opendir("/dev/input");
+	if (!dir)
+		return;
+	while ((de = readdir(dir)) && kbd_count < MAX_KEYBOARDS) {
+		char path[300];
+		int fd;
+
+		if (strncmp(de->d_name, "event", 5))
+			continue;
+		snprintf(path, sizeof(path), "/dev/input/%s", de->d_name);
+		fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+		if (fd < 0)
+			continue;
+		memset(bits, 0, sizeof(bits));
+		if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits) >= 0 && test_bit(bits, KEY_A))
+			kbd_fd[kbd_count++] = fd;
+		else
+			close(fd);
+	}
+	closedir(dir);
+}
+
 /*
  * True when every connected display is powered off, as when the desktop
  * blanks the screens. Atomic drivers keep the connector's dpms attribute in
@@ -223,6 +277,62 @@ static void sleep_ms(int ms)
 	nanosleep(&ts, NULL);
 }
 
+/* How far CLOCK_BOOTTIME is ahead of CLOCK_MONOTONIC: grows across a suspend. */
+static double suspended_s(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_BOOTTIME, &ts);
+	return ts.tv_sec + ts.tv_nsec / 1e9 - now_s();
+}
+
+/*
+ * Wait ms, noting the time of the last key press in *last_key. Only the
+ * timing of key events is used. With wake set, return at the first one.
+ */
+static void wait_ms(int ms, double *last_key, bool wake)
+{
+	double end = now_s() + ms / 1000.0;
+	struct pollfd p[MAX_KEYBOARDS];
+
+	if (!kbd_count) {
+		sleep_ms(ms);
+		return;
+	}
+	while (!stop) {
+		int left = (int)ceil((end - now_s()) * 1000);
+		bool key = false;
+
+		if (left <= 0)
+			return;
+		for (int i = 0; i < kbd_count; i++)
+			p[i] = (struct pollfd){ .fd = kbd_fd[i], .events = POLLIN };
+		if (poll(p, kbd_count, left) <= 0)
+			return;
+		for (int i = 0; i < kbd_count; i++) {
+			struct input_event ev[64];
+			ssize_t len;
+
+			if (p[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+				close(kbd_fd[i]);	/* unplugged */
+				kbd_fd[i] = -1;
+				continue;
+			}
+			if (!(p[i].revents & POLLIN))
+				continue;
+			while ((len = read(kbd_fd[i], ev, sizeof(ev))) > 0)
+				for (size_t j = 0; j < (size_t)len / sizeof(ev[0]); j++)
+					if (ev[j].type == EV_KEY && ev[j].value)
+						key = true;
+		}
+		if (key) {
+			*last_key = now_s();
+			if (wake)
+				return;
+		}
+	}
+}
+
 /* Automatic level for a smoothed log10(lux), with on/off hysteresis. */
 static long auto_level(const struct config *c, double log_lux, bool lit, long max)
 {
@@ -247,12 +357,16 @@ int main(int argc, char **argv)
 		.off_lux = env_double("AURORA_KBD_LIGHT_OFF_LUX", 120),
 		.min_pct = (int)env_double("AURORA_KBD_LIGHT_MIN_PERCENT", 10),
 		.max_pct = (int)env_double("AURORA_KBD_LIGHT_MAX_PERCENT", 50),
+		.idle_s = env_double("AURORA_KBD_LIGHT_IDLE_SECONDS", 0),
+		.idle_pct = (int)env_double("AURORA_KBD_LIGHT_IDLE_PERCENT", 0),
 	};
 	char *led_dir, *als_path, bright_path[512], max_path[512];
 	double log_lux = NAN, last_t, hold_log_lux = 0;
-	long max, cur, written = -1, auto_last = -1, hold_level = 0, target;
-	bool hold = false, off_latch = false, write_failed = false;
-	double lid_retry_t, dark_since = -1;
+	long max, cur, written = -1, auto_last = -1, hold_level = 0, target, idle_level;
+	bool hold = false, off_latch = false, write_failed = false, was_dark = false;
+	/* dimmed: capped at the idle level now; dim_shown: that level is what was last shown */
+	bool dimmed = false, dim_shown = false;
+	double lid_retry_t, dark_since = -1, last_key, kbd_scan_t, suspended;
 	int lid_fd;
 
 	for (int i = 1; i < argc; i++)
@@ -262,6 +376,8 @@ int main(int argc, char **argv)
 		c.max_pct = 100;
 	if (c.min_pct > c.max_pct)
 		c.min_pct = c.max_pct;
+	if (c.idle_pct > 100)
+		c.idle_pct = 100;
 	if (!(c.full_lux > 0 && c.full_lux < c.on_lux && c.on_lux <= c.off_lux)) {
 		fprintf(stderr, "invalid lux thresholds\n");
 		return 2;
@@ -281,16 +397,23 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	lid_fd = open_lid();
+	idle_level = lround(max * c.idle_pct / 100.0);
+	if (c.idle_s > 0)
+		open_keyboards();
 	fprintf(stderr, "keyboard backlight %s (max %ld), light sensor %s, lid switch %s\n",
 		led_dir, max, als_path, lid_fd >= 0 ? "found" : "not found");
+	if (c.idle_s > 0)
+		fprintf(stderr, "dims to %d%% after %g s without a key press (%d keyboards)\n",
+			c.idle_pct, c.idle_s, kbd_count);
 
 	signal(SIGTERM, on_signal);
 	signal(SIGINT, on_signal);
-	last_t = lid_retry_t = now_s();
+	last_t = lid_retry_t = kbd_scan_t = last_key = now_s();
+	suspended = suspended_s();
 
 	while (!stop) {
 		double lux, t = now_s(), dt = t - last_t;
-		bool fading, dark, automatic;
+		bool fading, dark, automatic, idle;
 
 		last_t = t;
 		/* The lid switch can register after this starts. */
@@ -298,8 +421,21 @@ int main(int argc, char **argv)
 			lid_retry_t = t;
 			lid_fd = open_lid();
 		}
+		if (c.idle_s > 0) {
+			double s = suspended_s();
+
+			/* Keyboards come and go. */
+			if (t - kbd_scan_t > RESCAN_S) {
+				kbd_scan_t = t;
+				open_keyboards();
+			}
+			/* Waking from suspend counts as a key press. */
+			if (s - suspended > 2)
+				last_key = t;
+			suspended = s;
+		}
 		if (read_int(bright_path, &cur)) {
-			sleep_ms(TICK_MS);
+			wait_ms(TICK_MS, &last_key, false);
 			continue;
 		}
 
@@ -308,7 +444,7 @@ int main(int argc, char **argv)
 			if (cur == 0) {
 				off_latch = true;
 				hold = false;
-			} else if (cur == auto_last) {
+			} else if (cur == auto_last || (dim_shown && cur == idle_level)) {
 				off_latch = hold = false;	/* restored after idle dimming */
 			} else {
 				off_latch = false;
@@ -341,6 +477,11 @@ int main(int argc, char **argv)
 			dark_since = t;
 		dark = lid_closed(lid_fd) ||
 		       (dark_since >= 0 && t - dark_since >= DISPLAYS_OFF_S);
+		/* Opening the lid or waking a display counts as a key press. */
+		if (was_dark && !dark)
+			last_key = t;
+		was_dark = dark;
+		idle = c.idle_s > 0 && t - last_key >= c.idle_s;
 
 		/* A closed lid or sleeping displays win; a held level comes back after. */
 		automatic = false;
@@ -349,11 +490,18 @@ int main(int argc, char **argv)
 		} else if (hold) {
 			target = hold_level;
 		} else if (!isnan(log_lux)) {
-			target = auto_level(&c, log_lux, written > 0, max);
+			/* Dimmed for idle, it was lit: keep the off threshold. */
+			target = auto_level(&c, log_lux, written > 0 || dimmed, max);
 			automatic = true;
 		} else {
-			sleep_ms(TICK_MS);
+			wait_ms(TICK_MS, &last_key, false);
 			continue;
+		}
+		/* No key press for a while: no brighter than the idle level. */
+		dimmed = idle && target > idle_level;
+		if (dimmed) {
+			target = idle_level;
+			automatic = false;
 		}
 		if (labs(target - written) < DEADBAND && target != 0 && written != 0)
 			target = written;
@@ -384,15 +532,24 @@ int main(int argc, char **argv)
 					fprintf(stderr, "lux %.2f -> level %ld\n", pow(10, log_lux), target);
 				else
 					fprintf(stderr, "%s -> level %ld\n", dark ?
-						"lid closed or displays asleep" : "held level", target);
+						"lid closed or displays asleep" :
+						dimmed ? "no key press" : "held level", target);
 			}
 		} else if (automatic) {
 			auto_last = written;
 		}
-		sleep_ms(fading ? FADE_TICK_MS : TICK_MS);
+		if (written == target) {
+			if (dimmed)
+				dim_shown = true;
+			else if (automatic || hold)
+				dim_shown = false;
+		}
+		/* While dimmed, come back at the first key press. */
+		wait_ms(fading ? FADE_TICK_MS : TICK_MS, &last_key, dimmed);
 	}
 
 	if (lid_fd >= 0)
 		close(lid_fd);
+	close_keyboards();
 	return 0;
 }
