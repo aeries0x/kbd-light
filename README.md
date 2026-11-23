@@ -110,6 +110,16 @@ Backlight=              # a /sys/class/backlight name, if not the Apple panel's
 
 The service keeps its state in `$XDG_RUNTIME_DIR/aurora-display-light/status` (light, target, level) for settings pages.
 
+**Plasma settings page:** `kcm/` builds a System Settings module, *Display & Monitor → Auto-Brightness*: on/off, the
+profile (and the custom curve's five points), the response, learning, forgetting what was learned, and a graph of the
+curve with the room's light and the screen's level live.
+
+```sh
+cmake -B kcm/build -S kcm -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build kcm/build
+DESTDIR=... cmake --install kcm/build
+```
+
 ### Diagnostics
 
 - `aurora-display-light -v` logs every transition and every change made by others (in the journal:
