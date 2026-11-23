@@ -50,6 +50,7 @@ struct panel {
 	/* a change made by someone else, not yet taken */
 	bool foreign;
 	bool foreign_automatic;	/* by the desktop itself (a power profile's level), not a person */
+	char foreign_by[96];	/* who, for the log: the client and its context */
 	double foreign_t;
 	double foreign_nits;
 };

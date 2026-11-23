@@ -19,8 +19,11 @@
 /* Passed with every change, and handed back in the BrightnessChanged signal. */
 #define KDE_CONTEXT "aurora-display-light"
 #define KDE_SUPPRESS_INDICATOR 0x1
-/* PowerDevil's own changes: the level a power profile (AC, battery) sets. */
-#define KDE_OWN_CLIENT "(internal)"
+/*
+ * PowerDevil tags its own changes with the client "(internal)" and a context:
+ * "brightness_key" for the brightness keys (a person), "profile_brightness" for
+ * the level a power profile (AC, battery) sets (automatic).
+ */
 #define KDE_PROFILE_CONTEXT "profile_brightness"
 #define KDE_RETRY_S 2.0
 
@@ -142,9 +145,11 @@ static int on_brightness_changed(sd_bus_message *m, void *userdata, sd_bus_error
 	p->kde_value = value;
 	if (strcmp(context, KDE_CONTEXT) && !(!*client && kde_echo(p, value))) {
 		/* a burst of changes counts as automatic only if every one of them was */
-		bool automatic = !strcmp(client, KDE_OWN_CLIENT) || !strcmp(context, KDE_PROFILE_CONTEXT);
+		bool automatic = !strcmp(context, KDE_PROFILE_CONTEXT);
 
 		p->foreign_automatic = p->foreign ? p->foreign_automatic && automatic : automatic;
+		snprintf(p->foreign_by, sizeof(p->foreign_by), "%s%s%s", *client ? client : "(no source)",
+			 *context ? ", " : "", context);
 		p->foreign = true;
 		p->foreign_nits = kde_to_nits(p, value);
 		/* the caller stamps the time: signals carry none */
@@ -319,6 +324,7 @@ void panel_process(struct panel *p, double t)
 
 		if (p->written >= 0 && cur >= 0 && cur != p->written) {
 			p->foreign_automatic = false;
+			snprintf(p->foreign_by, sizeof(p->foreign_by), "a write to the backlight");
 			p->foreign = true;
 			p->foreign_nits = cur;
 			p->foreign_t = -1;

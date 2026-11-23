@@ -66,8 +66,8 @@ idle dimming keep working as before.
     from the keys, the slider or another program arrives with its source, so it is told apart from the service's own
     exactly; it is learned once the level has stayed put for a second. Plasma's idle dimming is applied on top of the
     level set here and is not a brightness change at all; a level a power profile sets (on AC or battery) is held, not
-    learned. A program that sets the brightness through PowerDevil's older interface looks like the keys and is
-    learned too.
+    learned (PowerDevil marks the keys `brightness_key` and a profile's level `profile_brightness`). A program that
+    sets the brightness through PowerDevil's older interface arrives without a source and is learned too.
   - **GNOME** has automatic brightness of its own (Settings, Power); the service steps aside there.
   - **Others** (Hyprland, Sway, ...): the brightness is set through logind (`SetBrightness` on the user's session),
     or the sysfs file if that is writable. A change made by something else can't be told apart from idle dimming

@@ -356,7 +356,7 @@ static int run(const char *trace_path)
 		if (pn.foreign) {
 			/* Someone else is changing it: stand back until the level settles. */
 			if (c.ramp.active || !foreign_seen)
-				info("changed to %.0f nits by someone else", pn.foreign_nits);
+				info("changed to %.0f nits by %s", pn.foreign_nits, pn.foreign_by);
 			foreign_seen = true;
 			c.ramp.active = false;
 			if (t - pn.foreign_t >= SETTLE_S) {
