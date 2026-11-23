@@ -362,12 +362,13 @@ static int run(const char *trace_path)
 			if (t - pn.foreign_t >= SETTLE_S) {
 				/*
 				 * Learned: a change from the keys, the slider or another program
-				 * under Plasma. Held: a power profile's level, a level the desktop
-				 * restores at start or after a wake, and anything on desktops that
-				 * can't say where a change came from.
+				 * under Plasma. Held: the desktop's own levels (a power profile's),
+				 * a change nothing says the source of, a level the desktop restores
+				 * at start or after a wake, and anything on desktops that can't say
+				 * where a change came from.
 				 */
 				enum dl_adjust how = pn.backend == PANEL_KDE && s.learn && t >= grace_until &&
-							     !pn.foreign_automatic ? DL_ADJUST_LEARN : DL_ADJUST_HOLD;
+							     pn.foreign_person ? DL_ADJUST_LEARN : DL_ADJUST_HOLD;
 				double recent = dl_ambient_recent(&c.ambient);
 
 				pn.foreign = false;
@@ -386,7 +387,7 @@ static int run(const char *trace_path)
 					event = "learned";
 				} else if (c.hold) {
 					info("set to %.0f nits at %.1f lx by %s: holding", pn.foreign_nits, recent,
-					     pn.foreign_automatic ? "the desktop" : "someone else");
+					     pn.foreign_by);
 					event = "hold";
 				} else {
 					info("back to %.0f nits: automatic", pn.foreign_nits);

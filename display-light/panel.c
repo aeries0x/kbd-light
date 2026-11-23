@@ -21,10 +21,15 @@
 #define KDE_SUPPRESS_INDICATOR 0x1
 /*
  * PowerDevil tags its own changes with the client "(internal)" and a context:
- * "brightness_key" for the brightness keys (a person), "profile_brightness" for
- * the level a power profile (AC, battery) sets (automatic).
+ * "brightness_key" for the brightness keys (a person); the others are its own
+ * ("profile_brightness" for a power profile's level, "dimming" on older
+ * versions). A slider or another program arrives as its bus name. A change
+ * without a client was observed after the fact (a display reconfigured, the
+ * compositor's level changed underneath) or came through the older interface:
+ * nothing says who made it.
  */
-#define KDE_PROFILE_CONTEXT "profile_brightness"
+#define KDE_INTERNAL_CLIENT "(internal)"
+#define KDE_KEY_CONTEXT "brightness_key"
 #define KDE_RETRY_S 2.0
 
 #define LOGIN_SERVICE "org.freedesktop.login1"
@@ -132,6 +137,15 @@ static bool kde_echo(const struct panel *p, int value)
 	return false;
 }
 
+static bool by_person(const char *client, const char *context)
+{
+	if (!*client)
+		return false;
+	if (!strcmp(client, KDE_INTERNAL_CLIENT))
+		return !strcmp(context, KDE_KEY_CONTEXT);
+	return true;
+}
+
 static int on_brightness_changed(sd_bus_message *m, void *userdata, sd_bus_error *err)
 {
 	struct panel *p = userdata;
@@ -144,10 +158,10 @@ static int on_brightness_changed(sd_bus_message *m, void *userdata, sd_bus_error
 		return 0;
 	p->kde_value = value;
 	if (strcmp(context, KDE_CONTEXT) && !(!*client && kde_echo(p, value))) {
-		/* a burst of changes counts as automatic only if every one of them was */
-		bool automatic = !strcmp(context, KDE_PROFILE_CONTEXT);
+		/* a burst of changes is a person's only if every one of them was */
+		bool person = by_person(client, context);
 
-		p->foreign_automatic = p->foreign ? p->foreign_automatic && automatic : automatic;
+		p->foreign_person = p->foreign ? p->foreign_person && person : person;
 		snprintf(p->foreign_by, sizeof(p->foreign_by), "%s%s%s", *client ? client : "(no source)",
 			 *context ? ", " : "", context);
 		p->foreign = true;
@@ -323,7 +337,7 @@ void panel_process(struct panel *p, double t)
 		long cur = read_long(p->sysfs, "brightness");
 
 		if (p->written >= 0 && cur >= 0 && cur != p->written) {
-			p->foreign_automatic = false;
+			p->foreign_person = false;
 			snprintf(p->foreign_by, sizeof(p->foreign_by), "a write to the backlight");
 			p->foreign = true;
 			p->foreign_nits = cur;
