@@ -4,6 +4,8 @@ project(kcm_aurora_display_light LANGUAGES CXX)
 
 set(QT_MIN_VERSION 6.7) # QStandardPaths::GenericStateLocation
 set(KF_MIN_VERSION 6.0)
+set(CMAKE_CXX_STANDARD 20) # libkscreen's headers
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ECM ${KF_MIN_VERSION} REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
@@ -13,6 +15,8 @@ include(KDECompilerSettings NO_POLICY_SCOPE)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Qml Quick)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Config CoreAddons I18n KCMUtils)
+# libkscreen: Plasma's own automatic brightness, switched per screen (Plasma 6.6 and later)
+find_package(KF6Screen 6.6 REQUIRED)
 
 kcmutils_add_qml_kcm(kcm_aurora_display_light
     SOURCES displaylightkcm.cpp displaylightkcm.h
@@ -27,4 +31,5 @@ target_link_libraries(kcm_aurora_display_light PRIVATE
     KF6::ConfigGui
     KF6::CoreAddons
     KF6::I18n
-    KF6::KCMUtilsQuick)
+    KF6::KCMUtilsQuick
+    KF6::Screen)

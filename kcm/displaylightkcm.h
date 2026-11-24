@@ -2,6 +2,7 @@
 #pragma once
 
 #include <KQuickManagedConfigModule>
+#include <KScreen/Types>
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QTimer>
@@ -14,7 +15,10 @@
  * plain KConfig entries (aurora-display-lightsettings.kcfg) that the service
  * re-reads when the file changes; this class adds what QML can't do alone:
  * the built-in profiles, the adjustments the service has learned, its live
- * status, and the curve for drawing.
+ * status, and the curve for drawing. It is also where the user picks which
+ * automatic brightness drives the built-in screen: this one, Plasma's own
+ * (KWin's, which Display Configuration also switches), or none. Choosing one
+ * turns the other off, so they never run together.
  */
 class DisplayLightKcm : public KQuickManagedConfigModule
 {
@@ -25,8 +29,17 @@ class DisplayLightKcm : public KQuickManagedConfigModule
     Q_PROPERTY(double maxNits READ maxNits NOTIFY statusChanged)
     Q_PROPERTY(QVariantList pointLux READ pointLux CONSTANT)
     Q_PROPERTY(bool hasLearned READ hasLearned NOTIFY learnedChanged)
+    Q_PROPERTY(Mode mode READ mode WRITE setMode NOTIFY modeChanged)
+    Q_PROPERTY(bool plasmaAvailable READ plasmaAvailable NOTIFY modeChanged)
 
 public:
+    enum Mode {
+        Off,
+        Aurora, // this service, with this page's settings
+        Plasma, // KWin's own automatic brightness
+    };
+    Q_ENUM(Mode)
+
     DisplayLightKcm(QObject *parent, const KPluginMetaData &data);
 
     DisplayLightSettings *settings() const;
@@ -35,6 +48,14 @@ public:
     double maxNits() const;
     QVariantList pointLux() const;
     bool hasLearned() const;
+    Mode mode() const;
+    void setMode(Mode mode);
+    /* Whether Plasma offers automatic brightness for the built-in screen (it has the light sensor). */
+    bool plasmaAvailable() const;
+
+    void load() override;
+    void save() override;
+    void defaults() override;
 
     /* The nits of a profile at pointLux, as the page is set now ("custom" reads the unsaved values). */
     Q_INVOKABLE QVariantList profileNits(const QString &profile) const;
@@ -50,8 +71,15 @@ public:
 Q_SIGNALS:
     void statusChanged();
     void learnedChanged();
+    void modeChanged();
+
+protected:
+    bool isSaveNeeded() const override;
+    bool isDefaults() const override;
 
 private:
+    void readScreens();
+    void applyPlasma(bool on);
     void readStatus();
     void readLearned();
     QString learnedPath() const;
@@ -62,4 +90,7 @@ private:
     QHash<QString, QVariantList> m_learned; // profile -> offsets, as the service saved them
     QTimer m_statusTimer;
     QFileSystemWatcher m_learnedWatcher;
+    bool m_plasmaAvailable = false;
+    bool m_plasmaOn = false; // as KWin has it
+    bool m_plasmaWanted = false; // as chosen on this page
 };

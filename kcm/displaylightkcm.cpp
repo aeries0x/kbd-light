@@ -2,10 +2,15 @@
 #include "displaylightkcm.h"
 
 #include <KPluginFactory>
+#include <KScreen/Config>
+#include <KScreen/GetConfigOperation>
+#include <KScreen/Output>
+#include <KScreen/SetConfigOperation>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMetaProperty>
 #include <QQmlEngine>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -48,6 +53,24 @@ double luxX(double lux)
 {
     return std::log10(1 + std::clamp(lux, PointLux.front(), PointLux.back()));
 }
+
+KScreen::OutputPtr builtInScreen(const KScreen::ConfigPtr &config)
+{
+    if (!config) {
+        return {};
+    }
+    for (const KScreen::OutputPtr &output : config->outputs()) {
+        if (output->type() == KScreen::Output::Panel && output->isConnected()) {
+            return output;
+        }
+    }
+    return {};
+}
+
+bool hasPlasmaAutoBrightness(const KScreen::OutputPtr &output)
+{
+    return output && output->capabilities().testFlag(KScreen::Output::Capability::AutomaticBrightness);
+}
 }
 
 DisplayLightKcm::DisplayLightKcm(QObject *parent, const KPluginMetaData &data)
@@ -55,6 +78,7 @@ DisplayLightKcm::DisplayLightKcm(QObject *parent, const KPluginMetaData &data)
     , m_settings(new DisplayLightSettings(this))
 {
     qmlRegisterAnonymousType<DisplayLightSettings>("org.aurora.displaylight", 1);
+    qmlRegisterUncreatableType<DisplayLightKcm>("org.aurora.displaylight", 1, 0, "DisplayLightKcm", QStringLiteral("the page's module, for its enums"));
     setButtons(Apply | Default);
 
     readStatus();
@@ -67,6 +91,114 @@ DisplayLightKcm::DisplayLightKcm(QObject *parent, const KPluginMetaData &data)
     QDir().mkpath(dir);
     m_learnedWatcher.addPath(dir);
     connect(&m_learnedWatcher, &QFileSystemWatcher::directoryChanged, this, &DisplayLightKcm::readLearned);
+
+    // the service's on/off is part of the mode (Default and Reset change it too)
+    const QMetaObject *settingsMeta = m_settings->metaObject();
+    const QMetaProperty enabled = settingsMeta->property(settingsMeta->indexOfProperty("enabled"));
+    if (enabled.hasNotifySignal()) {
+        connect(m_settings, enabled.notifySignal(), this, metaObject()->method(metaObject()->indexOfSignal("modeChanged()")));
+    }
+    readScreens();
+}
+
+void DisplayLightKcm::readScreens()
+{
+    auto *op = new KScreen::GetConfigOperation(KScreen::ConfigOperation::NoEDID, this);
+    connect(op, &KScreen::ConfigOperation::finished, this, [this](KScreen::ConfigOperation *op) {
+        const KScreen::OutputPtr screen = op->hasError() ? KScreen::OutputPtr() : builtInScreen(op->config());
+        const bool wasSaveNeeded = m_plasmaWanted != m_plasmaOn;
+        m_plasmaAvailable = hasPlasmaAutoBrightness(screen);
+        m_plasmaOn = m_plasmaAvailable && screen->automaticBrightness();
+        if (!wasSaveNeeded) {
+            m_plasmaWanted = m_plasmaOn;
+        }
+        Q_EMIT modeChanged();
+        settingsChanged();
+    });
+}
+
+void DisplayLightKcm::applyPlasma(bool on)
+{
+    // from a fresh copy, so that nothing else changed on the screens since the page opened is undone
+    auto *get = new KScreen::GetConfigOperation(KScreen::ConfigOperation::NoEDID, this);
+    connect(get, &KScreen::ConfigOperation::finished, this, [this, on](KScreen::ConfigOperation *get) {
+        const KScreen::OutputPtr screen = get->hasError() ? KScreen::OutputPtr() : builtInScreen(get->config());
+        if (!hasPlasmaAutoBrightness(screen)) {
+            readScreens();
+            return;
+        }
+        if (screen->automaticBrightness() == on) {
+            readScreens();
+            return;
+        }
+        screen->setAutomaticBrightness(on);
+        auto *set = new KScreen::SetConfigOperation(get->config(), this);
+        connect(set, &KScreen::ConfigOperation::finished, this, [this](KScreen::ConfigOperation *set) {
+            if (set->hasError()) {
+                qWarning("could not change Plasma's automatic brightness: %s", qPrintable(set->errorString()));
+            }
+            readScreens();
+        });
+    });
+}
+
+DisplayLightKcm::Mode DisplayLightKcm::mode() const
+{
+    if (m_plasmaWanted) {
+        return Plasma;
+    }
+    return m_settings->enabled() ? Aurora : Off;
+}
+
+void DisplayLightKcm::setMode(Mode mode)
+{
+    if (mode == this->mode()) {
+        return;
+    }
+    m_plasmaWanted = mode == Plasma && m_plasmaAvailable;
+    m_settings->setEnabled(mode == Aurora);
+    Q_EMIT modeChanged();
+    settingsChanged();
+}
+
+bool DisplayLightKcm::plasmaAvailable() const
+{
+    return m_plasmaAvailable;
+}
+
+void DisplayLightKcm::load()
+{
+    KQuickManagedConfigModule::load();
+    m_plasmaWanted = m_plasmaOn;
+    Q_EMIT modeChanged();
+    readScreens();
+}
+
+void DisplayLightKcm::save()
+{
+    // this service's settings first: choosing Plasma's turns this one off before Plasma's starts
+    KQuickManagedConfigModule::save();
+    if (m_plasmaWanted != m_plasmaOn) {
+        applyPlasma(m_plasmaWanted);
+    }
+}
+
+void DisplayLightKcm::defaults()
+{
+    KQuickManagedConfigModule::defaults();
+    m_plasmaWanted = false;
+    Q_EMIT modeChanged();
+    settingsChanged();
+}
+
+bool DisplayLightKcm::isSaveNeeded() const
+{
+    return m_plasmaWanted != m_plasmaOn;
+}
+
+bool DisplayLightKcm::isDefaults() const
+{
+    return !m_plasmaWanted;
 }
 
 DisplayLightSettings *DisplayLightKcm::settings() const

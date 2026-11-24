@@ -32,6 +32,7 @@
 
 #include "model.h"
 #include "panel.h"
+#include "plasma.h"
 #include "settings.h"
 
 #define SAMPLE_S 0.2		/* the light sensor reports at 5 Hz */
@@ -158,22 +159,23 @@ static int watch_dir_of(int fd, const char *file)
 				 IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_DELETE);
 }
 
-/* Whether one of the files named (basenames) changed. */
-static bool drain_inotify(int fd, const char *a, const char *b)
+/* Which of the files named (basenames, NULL-terminated) changed: bit i for names[i]. */
+static unsigned drain_inotify(int fd, const char *const *names)
 {
 	char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
-	bool any = false;
+	unsigned changed = 0;
 	ssize_t n;
 
 	while ((n = read(fd, buf, sizeof(buf))) > 0)
 		for (char *p = buf; p < buf + n;) {
 			const struct inotify_event *ev = (const struct inotify_event *)p;
 
-			if (ev->len && (!strcmp(ev->name, a) || !strcmp(ev->name, b)))
-				any = true;
+			for (unsigned i = 0; ev->len && names[i]; i++)
+				if (!strcmp(ev->name, names[i]))
+					changed |= 1u << i;
 			p += sizeof(*ev) + ev->len;
 		}
-	return any;
+	return changed;
 }
 
 struct status {
@@ -231,13 +233,15 @@ static int run(const char *trace_path)
 	struct dl_params params;
 	struct dl_controller c;
 	struct panel pn;
-	char state_path[PATH_MAX] = "", config_path[PATH_MAX] = "";
+	char state_path[PATH_MAX] = "", config_path[PATH_MAX] = "", outputs_path[PATH_MAX] = "";
 	const char *desktop = getenv("XDG_CURRENT_DESKTOP"), *state_name;
 	double offset[DL_POINTS], t0 = now_s(), lux = NAN;
 	double sample_t = -1, dark_t = -1, status_t = -1, grace_until, suspended;
-	bool dark = false, kde, was_ready = false, foreign_seen = false;
+	bool dark = false, kde, was_ready = false, foreign_seen = false, plasma_auto = false;
 	FILE *trace = NULL;
 	char *als;
+	const char *watched[4] = { DL_CONFIG_NAME, NULL, DL_KWIN_OUTPUTS_NAME, NULL };
+	unsigned changed;
 	int ino, ret;
 
 	if (contains_word(desktop, "GNOME")) {
@@ -265,6 +269,12 @@ static int run(const char *trace_path)
 	dl_config_path(config_path, sizeof(config_path));
 	dl_state_path(state_path, sizeof(state_path));
 	state_name = strrchr(state_path, '/') ? strrchr(state_path, '/') + 1 : state_path;
+	watched[1] = state_name;
+	/* Plasma's own automatic brightness, when it is on, has the panel */
+	if (kde && !dl_plasma_outputs_path(outputs_path, sizeof(outputs_path)))
+		plasma_auto = dl_plasma_auto_brightness(outputs_path);
+	else
+		watched[2] = NULL;
 	dl_settings_params(&s, pn.max_nits, &params);
 	dl_learned_load(state_path, s.profile, offset);
 	dl_controller_init(&c, &params, offset, -1);
@@ -275,6 +285,8 @@ static int run(const char *trace_path)
 			watch_dir_of(ino, config_path);
 		if (state_path[0])
 			watch_dir_of(ino, state_path);
+		if (outputs_path[0])
+			watch_dir_of(ino, outputs_path);
 	}
 	if (trace_path) {
 		make_parent(trace_path);
@@ -287,6 +299,8 @@ static int run(const char *trace_path)
 	say("panel %s (%.0f nits), light sensor %s, brightness through %s; profile %s, response %s%s",
 	    pn.sysfs, pn.max_nits, als, kde ? "Plasma" : "logind", s.profile, s.response,
 	    s.learn ? ", learning" : "");
+	if (plasma_auto)
+		say("Plasma's own automatic brightness is on for the built-in screen; leaving the brightness to it");
 
 	signal(SIGTERM, on_signal);
 	signal(SIGINT, on_signal);
@@ -309,18 +323,25 @@ static int run(const char *trace_path)
 			info("woke up");
 		}
 		suspended = susp;
-		if (ino >= 0 && drain_inotify(ino, DL_CONFIG_NAME, state_name)) {
+		changed = ino >= 0 ? drain_inotify(ino, watched) : 0;
+		if (changed & 3) {
 			reload(&c, &s, &pn, state_path, t);
+			event = "settings";
+		}
+		if (changed & 4 && dl_plasma_auto_brightness(outputs_path) != plasma_auto) {
+			plasma_auto = !plasma_auto;
+			info("%s", plasma_auto ? "Plasma's own automatic brightness was turned on; leaving the brightness to it"
+					 : "Plasma's own automatic brightness was turned off; following the light again");
 			event = "settings";
 		}
 		panel_process(&pn, t);
 
-		if (!s.enabled || !panel_ready(&pn, t)) {
+		if (!s.enabled || plasma_auto || !panel_ready(&pn, t)) {
 			pn.foreign = false;
 			was_ready = false;
 			dl_controller_restart(&c);
 			if (t - status_t >= STATUS_S) {
-				write_status(&(struct status){ s.enabled ? "waiting" : "off", lux, NAN, NAN,
+				write_status(&(struct status){ plasma_auto ? "plasma" : s.enabled ? "waiting" : "off", lux, NAN, NAN,
 						panel_level(&pn), pn.max_nits, s.profile, s.response,
 						kde ? "plasma" : "logind" });
 				status_t = t;

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "model.h"
+#include "plasma.h"
 #include "settings.h"
 
 static int failures;
@@ -387,6 +388,32 @@ static void test_fixtures(const char *dir)
 	CHECK(n == 0, "no transition away from the pick: %d", n);
 }
 
+static void test_plasma_outputs(void)
+{
+	/* KWin's output settings, as it writes them (shortened) */
+	static const char on[] =
+		"[\n    {\n        \"data\": [\n            {\n                \"autoBrightnessCurve\": [[0, 0.2], [300, 0.7]],\n"
+		"                \"automaticBrightness\": true,\n                \"brightness\": 0.75,\n"
+		"                \"connectorName\": \"eDP-1\",\n                \"edidIdentifier\": \"APP 41744 0 0 0\"\n            },\n"
+		"            {\n                \"automaticBrightness\": false,\n                \"connectorName\": \"DP-1\"\n            }\n"
+		"        ],\n        \"name\": \"outputs\"\n    },\n"
+		"    {\n        \"data\": [{\"lidClosed\": false, \"outputs\": [{\"enabled\": true, \"outputIndex\": 0}]}],\n"
+		"        \"name\": \"setups\"\n    }\n]\n";
+	static const char off[] = "[{\"data\": [{\"automaticBrightness\": false, \"connectorName\": \"eDP-1\"}], \"name\": \"outputs\"}]";
+	static const char external[] =
+		"[{\"data\": [{\"connectorName\": \"eDP-1\"}, {\"automaticBrightness\": true, \"connectorName\": \"HDMI-A-1\"}],"
+		" \"name\": \"outputs\"}]";
+	static const char escaped[] = "[{\"data\": [{\"x\": \"a\\\"}{,\", \"connectorName\": \"eDP-1\", \"automaticBrightness\": true}]}]";
+
+	CHECK(dl_plasma_auto_brightness_in(on), "on for the built-in panel");
+	CHECK(!dl_plasma_auto_brightness_in(off), "off");
+	CHECK(!dl_plasma_auto_brightness_in(external), "on only for an external screen");
+	CHECK(dl_plasma_auto_brightness_in(escaped), "escaped quotes and brackets in strings");
+	CHECK(!dl_plasma_auto_brightness_in(""), "an empty file");
+	CHECK(!dl_plasma_auto_brightness_in("[{\"data\": [{\"automaticBrightness\": tr"), "a cut-off file");
+	CHECK(!dl_plasma_auto_brightness("does-not-exist"), "no file");
+}
+
 int main(int argc, char **argv)
 {
 	const char *fixtures = argc > 1 ? argv[1] : "fixtures";
@@ -401,6 +428,7 @@ int main(int argc, char **argv)
 	test_steps();
 	test_no_ramp_away();
 	test_hold();
+	test_plasma_outputs();
 	test_fixtures(fixtures);
 	printf("%s\n", failures ? "FAILED" : "all passed");
 	return failures != 0;

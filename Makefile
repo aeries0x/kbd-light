@@ -6,8 +6,8 @@ CFLAGS += -Wall -Wextra -std=gnu11
 SYSTEMD_LIBS ?= $(shell pkg-config --libs libsystemd 2>/dev/null || echo -lsystemd)
 
 DL = display-light
-DL_MODEL = $(DL)/model.c $(DL)/settings.c
-DL_HEADERS = $(DL)/model.h $(DL)/settings.h $(DL)/panel.h $(DL)/profiles.h
+DL_MODEL = $(DL)/model.c $(DL)/settings.c $(DL)/plasma.c
+DL_HEADERS = $(DL)/model.h $(DL)/settings.h $(DL)/panel.h $(DL)/plasma.h $(DL)/profiles.h
 
 all: aurora-kbd-light aurora-display-light
 

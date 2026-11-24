@@ -70,6 +70,9 @@ idle dimming keep working as before.
     only the keys (`brightness_key`) are. A change without a source (one PowerDevil only observed, such as the
     compositor's level changing underneath it, or one made through its older interface) is held too: nothing says a
     person made it. A held level stays until it returns to the automatic one or the light changes threefold.
+    Plasma (6.6 and later) also has an automatic brightness of its own, in KWin (Display Configuration, "Automatic
+    brightness"); while it is on for the built-in screen (`automaticBrightness` in `~/.config/kwinoutputconfig.json`),
+    the service leaves the panel to it, since the two would fight. The settings page switches between them.
   - **GNOME** has automatic brightness of its own (Settings, Power); the service steps aside there.
   - **Others** (Hyprland, Sway, ...): the brightness is set through logind (`SetBrightness` on the user's session),
     or the sysfs file if that is writable. A change made by something else can't be told apart from idle dimming
@@ -112,7 +115,9 @@ Backlight=              # a /sys/class/backlight name, if not the Apple panel's
 
 The service keeps its state in `$XDG_RUNTIME_DIR/aurora-display-light/status` (light, target, level) for settings pages.
 
-**Plasma settings page:** `kcm/` builds a System Settings module, *Display & Monitor → Auto-Brightness*: on/off, the
+**Plasma settings page:** `kcm/` builds a System Settings module, *Display & Monitor → Auto-Brightness*: which automatic
+brightness drives the built-in screen (this one, Plasma's own, or none; choosing one turns the other off, Plasma's
+through libkscreen), the
 profile (and the custom curve's five points), the response, learning, forgetting what was learned, and a graph of the
 curve with the room's light and the screen's level live.
 

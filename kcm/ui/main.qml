@@ -4,11 +4,14 @@ import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kcmutils as KCM
+import org.aurora.displaylight
 
 KCM.SimpleKCM {
     id: root
 
     readonly property var settings: kcm.settings
+    // this page's settings apply only while this service drives the screen
+    readonly property bool ours: kcm.mode === DisplayLightKcm.Aurora
     readonly property bool isCustom: settings.profile === "custom"
     readonly property var customKeys: ["darkNits", "dimNits", "indoorNits", "brightNits", "daylightNits"]
     readonly property var pointNames: [i18n("Dark room"), i18n("Dim room"), i18n("Indoor lighting"), i18n("Bright room"), i18n("Daylight")]
@@ -35,7 +38,7 @@ KCM.SimpleKCM {
     header: Kirigami.InlineMessage {
         position: Kirigami.InlineMessage.Position.Header
         type: Kirigami.MessageType.Warning
-        visible: root.settings.enabled && !kcm.running
+        visible: root.ours && !kcm.running
         text: i18n("The automatic brightness service is not running. Changes here take effect once it starts.")
     }
 
@@ -45,22 +48,39 @@ KCM.SimpleKCM {
         Kirigami.FormLayout {
             Layout.fillWidth: true
 
-            QQC2.CheckBox {
-                Kirigami.FormData.label: i18n("Screen brightness:")
-                text: i18n("Adjust to the light in the room")
-                checked: root.settings.enabled
-                onToggled: root.settings.enabled = checked
+            QQC2.RadioButton {
+                Kirigami.FormData.label: i18n("Automatic brightness:")
+                text: i18n("Follow the light with these settings")
+                checked: kcm.mode === DisplayLightKcm.Aurora
+                onToggled: if (checked) kcm.mode = DisplayLightKcm.Aurora
+            }
 
-                KCM.SettingStateBinding {
-                    configObject: root.settings
-                    settingName: "Enabled"
-                }
+            QQC2.RadioButton {
+                visible: kcm.plasmaAvailable || kcm.mode === DisplayLightKcm.Plasma
+                text: i18n("Use Plasma's automatic brightness")
+                checked: kcm.mode === DisplayLightKcm.Plasma
+                onToggled: if (checked) kcm.mode = DisplayLightKcm.Plasma
+            }
+
+            QQC2.RadioButton {
+                text: i18nc("@option:radio automatic brightness", "Off")
+                checked: kcm.mode === DisplayLightKcm.Off
+                onToggled: if (checked) kcm.mode = DisplayLightKcm.Off
+            }
+
+            QQC2.Label {
+                Layout.maximumWidth: Kirigami.Units.gridUnit * 20
+                visible: kcm.mode === DisplayLightKcm.Plasma
+                text: i18n("Plasma follows the light by itself and learns from the brightness you choose. It has no settings of its own; the ones below are for this page's automatic brightness. Only one of the two runs at a time.")
+                wrapMode: Text.Wrap
+                font: Kirigami.Theme.smallFont
+                opacity: 0.8
             }
 
             QQC2.ComboBox {
                 id: profileBox
                 Kirigami.FormData.label: i18n("Brightness:")
-                enabled: root.settings.enabled
+                enabled: root.ours
                 model: root.profiles
                 textRole: "text"
                 valueRole: "value"
@@ -85,7 +105,7 @@ KCM.SimpleKCM {
                 RowLayout {
                     required property int index
                     Kirigami.FormData.label: i18nc("@label point of the custom curve: name, lux", "%1 (%2 lx):", root.pointNames[index], kcm.pointLux[index])
-                    enabled: root.settings.enabled
+                    enabled: root.ours
 
                     QQC2.Slider {
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 14
@@ -104,7 +124,7 @@ KCM.SimpleKCM {
             QQC2.ComboBox {
                 id: responseBox
                 Kirigami.FormData.label: i18n("Response:")
-                enabled: root.settings.enabled
+                enabled: root.ours
                 model: root.responses
                 textRole: "text"
                 valueRole: "value"
@@ -128,7 +148,7 @@ KCM.SimpleKCM {
 
             QQC2.CheckBox {
                 Kirigami.FormData.label: i18n("Adjustments:")
-                enabled: root.settings.enabled
+                enabled: root.ours
                 text: i18n("Learn from the brightness I choose")
                 checked: root.settings.learn
                 onToggled: root.settings.learn = checked
@@ -165,7 +185,7 @@ KCM.SimpleKCM {
             Layout.leftMargin: Kirigami.Units.largeSpacing
             Layout.rightMargin: Kirigami.Units.largeSpacing
             profile: root.settings.profile
-            enabled: root.settings.enabled
+            enabled: root.ours
         }
 
         QQC2.Label {
