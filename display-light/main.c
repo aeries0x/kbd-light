@@ -41,6 +41,7 @@
 #define GRACE_S 10.0		/* after start or wake, a change is held, not learned: it may be a restore */
 #define DARK_CHECK_S 1.0
 #define STATUS_S 1.0
+#define KDE_CHECK_S 5.0	/* while setting fails, how often to look for Plasma again */
 
 static volatile sig_atomic_t stop;
 static bool verbose;
@@ -237,7 +238,10 @@ static int run(const char *trace_path)
 	const char *desktop = getenv("XDG_CURRENT_DESKTOP"), *state_name;
 	double offset[DL_POINTS], t0 = now_s(), lux = NAN;
 	double sample_t = -1, dark_t = -1, status_t = -1, grace_until, suspended;
-	bool dark = false, kde, was_ready = false, foreign_seen = false, plasma_auto = false;
+	bool dark = false, kde, kde_guessed, was_ready = false, foreign_seen = false, plasma_auto = false;
+	bool set_failing = false;
+	double kde_check_t = -1;
+	int exit_code = 0;
 	FILE *trace = NULL;
 	char *als;
 	const char *watched[4] = { DL_CONFIG_NAME, NULL, DL_KWIN_OUTPUTS_NAME, NULL };
@@ -250,7 +254,8 @@ static int run(const char *trace_path)
 		return 0;
 	}
 	/* Plasma, also when the session didn't export XDG_CURRENT_DESKTOP to the user manager */
-	kde = contains_word(desktop, "KDE") || ((!desktop || !*desktop) && panel_kde_running());
+	kde_guessed = !desktop || !*desktop;
+	kde = contains_word(desktop, "KDE") || (kde_guessed && panel_kde_running());
 	load_settings(&s);
 	als = find_als();
 	if (!als) {
@@ -434,8 +439,28 @@ static int run(const char *trace_path)
 		}
 		if (dl_controller_level(&c, t, &nits)) {
 			ret = panel_set(&pn, nits);
-			if (ret < 0)
-				info("setting %.0f nits failed: %s", nits, strerror(-ret));
+			if (ret >= 0) {
+				if (set_failing)
+					say("setting the brightness works again");
+				set_failing = false;
+			} else {
+				if (!set_failing)
+					say("setting %.0f nits failed: %s", nits, strerror(-ret));
+				set_failing = true;
+				/*
+				 * Plasma's brightness control was not up when this started
+				 * (PowerDevil starting late or restarting): exit, and the
+				 * service restarts on it.
+				 */
+				if (!kde && kde_guessed && (kde_check_t < 0 || t - kde_check_t >= KDE_CHECK_S)) {
+					kde_check_t = t;
+					if (panel_kde_running()) {
+						say("Plasma's brightness control is up now; restarting to use it");
+						exit_code = 1;
+						break;
+					}
+				}
+			}
 			wait = TICK_S;
 		}
 		if (t - status_t >= STATUS_S) {
@@ -462,7 +487,7 @@ sleep:
 		close(ino);
 	panel_close(&pn);
 	free(als);
-	return 0;
+	return exit_code;
 }
 
 /*
