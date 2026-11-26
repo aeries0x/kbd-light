@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- The file aurora-display-light reads; it re-reads it whenever it changes. -->
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0 http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name="aurora-display-lightrc"/>
+  <group name="General">
+    <entry name="Enabled" type="Bool">
+      <label>Adjust the brightness from the ambient light</label>
+      <default>true</default>
+    </entry>
+    <entry name="Profile" type="String">
+      <label>Brightness profile: dimmer, balanced, brighter or custom</label>
+      <default>balanced</default>
+    </entry>
+    <entry name="Response" type="String">
+      <label>How readily the screen follows the light: calm, balanced or quick</label>
+      <default>balanced</default>
+    </entry>
+    <entry name="Learn" type="Bool">
+      <label>Learn from the brightness the user picks</label>
+      <default>true</default>
+    </entry>
+  </group>
+  <group name="Custom">
+    <entry name="DarkNits" type="Double">
+      <label>Nits in a dark room (0 lx)</label>
+      <default>25</default>
+      <min>1</min>
+      <max>2000</max>
+    </entry>
+    <entry name="DimNits" type="Double">
+      <label>Nits in a dim room (10 lx)</label>
+      <default>60</default>
+      <min>1</min>
+      <max>2000</max>
+    </entry>
+    <entry name="IndoorNits" type="Double">
+      <label>Nits in an evenly lit room (100 lx)</label>
+      <default>170</default>
+      <min>1</min>
+      <max>2000</max>
+    </entry>
+    <entry name="BrightNits" type="Double">
+      <label>Nits in a bright room (500 lx)</label>
+      <default>320</default>
+      <min>1</min>
+      <max>2000</max>
+    </entry>
+    <entry name="DaylightNits" type="Double">
+      <label>Nits in daylight (2000 lx)</label>
+      <default>500</default>
+      <min>1</min>
+      <max>2000</max>
+    </entry>
+  </group>
+</kcfg>

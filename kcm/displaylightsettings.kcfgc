@@ -1,0 +1,7 @@
+File=aurora-display-lightsettings.kcfg
+ClassName=DisplayLightSettings
+Mutators=true
+DefaultValueGetters=true
+GenerateProperties=true
+Notifiers=true
+ParentInConstructor=true
