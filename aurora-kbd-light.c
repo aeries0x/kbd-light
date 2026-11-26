@@ -8,7 +8,7 @@
  * slider, idle dimming) is respected: setting it to zero keeps it off until it
  * is turned on again, and any other level holds until the room's light
  * changes a lot. With the lid closed or the displays asleep the backlight
- * is off. Optionally, it dims after a time without a key press and comes
+ * is off. It also dims after a time without a key press and comes
  * back at the next one.
  *
  * Only sysfs and evdev are used, so this needs nothing beyond libc.
@@ -36,6 +36,7 @@
 #define DEADBAND 3		/* ignore smaller level changes */
 #define HOLD_RATIO 4.0		/* light change that ends a manual hold */
 #define DISPLAYS_OFF_S 1.0	/* displays dark this long: backlight off */
+#define DEFAULT_IDLE_S 30	/* idle keyboard timeout; 0 disables it */
 #define RESCAN_S 30		/* look for new keyboards this often */
 #define MAX_KEYBOARDS 16
 #define LONG_BITS (8 * sizeof(long))
@@ -309,13 +310,13 @@ static void wait_ms(int ms, double *last_key, bool wake)
 			p[i] = (struct pollfd){ .fd = kbd_fd[i], .events = POLLIN };
 		if (poll(p, kbd_count, left) <= 0)
 			return;
-		for (int i = 0; i < kbd_count; i++) {
+		for (int i = kbd_count - 1; i >= 0; i--) {
 			struct input_event ev[64];
 			ssize_t len;
 
 			if (p[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
 				close(kbd_fd[i]);	/* unplugged */
-				kbd_fd[i] = -1;
+				kbd_fd[i] = kbd_fd[--kbd_count];
 				continue;
 			}
 			if (!(p[i].revents & POLLIN))
@@ -357,7 +358,7 @@ int main(int argc, char **argv)
 		.off_lux = env_double("AURORA_KBD_LIGHT_OFF_LUX", 120),
 		.min_pct = (int)env_double("AURORA_KBD_LIGHT_MIN_PERCENT", 10),
 		.max_pct = (int)env_double("AURORA_KBD_LIGHT_MAX_PERCENT", 50),
-		.idle_s = env_double("AURORA_KBD_LIGHT_IDLE_SECONDS", 0),
+		.idle_s = env_double("AURORA_KBD_LIGHT_IDLE_SECONDS", DEFAULT_IDLE_S),
 		.idle_pct = (int)env_double("AURORA_KBD_LIGHT_IDLE_PERCENT", 0),
 	};
 	char *led_dir, *als_path, bright_path[512], max_path[512];
@@ -444,13 +445,17 @@ int main(int argc, char **argv)
 			if (cur == 0) {
 				off_latch = true;
 				hold = false;
-			} else if (cur == auto_last || (dim_shown && cur == idle_level)) {
-				off_latch = hold = false;	/* restored after idle dimming */
 			} else {
+				/* A slider adjustment also counts as activity. */
+				last_key = t;
 				off_latch = false;
-				hold = true;
-				hold_level = cur;
-				hold_log_lux = log_lux;
+				if (cur == auto_last || (dim_shown && cur == idle_level)) {
+					hold = false;	/* restored after desktop idle dimming */
+				} else {
+					hold = true;
+					hold_level = cur;
+					hold_log_lux = log_lux;
+				}
 			}
 			if (c.verbose)
 				fprintf(stderr, "external change to %ld: %s\n", cur,
@@ -481,7 +486,7 @@ int main(int argc, char **argv)
 		if (was_dark && !dark)
 			last_key = t;
 		was_dark = dark;
-		idle = c.idle_s > 0 && t - last_key >= c.idle_s;
+		idle = kbd_count > 0 && t - last_key >= c.idle_s;
 
 		/* A closed lid or sleeping displays win; a held level comes back after. */
 		automatic = false;
