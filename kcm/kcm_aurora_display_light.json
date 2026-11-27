@@ -1,0 +1,10 @@
+{
+    "KPlugin": {
+        "Description": "Screen brightness that follows the light in the room",
+        "Icon": "brightness-high",
+        "Name": "Auto-Brightness"
+    },
+    "X-KDE-Keywords": "brightness,auto-brightness,automatic brightness,ambient light,light sensor,backlight,screen,display",
+    "X-KDE-System-Settings-Parent-Category": "display",
+    "X-KDE-Weight": 60
+}
