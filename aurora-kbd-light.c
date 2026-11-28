@@ -512,7 +512,7 @@ int main(int argc, char **argv)
 		dark = lid_closed(lid_fd) ||
 		       (dark_since >= 0 && t - dark_since >= DISPLAYS_OFF_S);
 		if (dark && !was_dark)
-			relight = written > 0;
+			relight = relight || written > 0;
 		if (dark) {
 			settle_reset(&settle, t);
 		} else if (was_dark) {
@@ -563,7 +563,9 @@ int main(int argc, char **argv)
 			/* Dimmed for idle or dark for a while, it was lit: keep the off threshold. */
 			target = auto_level(&c, log_lux, written > 0 || dimmed || relight, max);
 			automatic = true;
-			relight = false;
+			/* Preserve wake hysteresis across a failed or idle-suppressed write. */
+			if (target == 0 || written > 0)
+				relight = false;
 		} else {
 			wait_ms(TICK_MS, &last_key, false);
 			continue;
@@ -588,6 +590,8 @@ int main(int argc, char **argv)
 				next = target;
 			if (write_int(bright_path, next) == 0) {
 				written = next;
+				if (written > 0)
+					relight = false;
 				if (written == target && automatic)
 					auto_last = target;
 				write_failed = false;
